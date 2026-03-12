@@ -11,6 +11,8 @@ project:
         - file: I2C.c
         - file: MAX30101.h
         - file: MAX30101.c
+        - file: PLL.c
+        - file: PLL.h
 
   # List components to use for your application.
   # A software component is a re-usable unit that may be configurable.

@@ -12,30 +12,20 @@
 #include "stm32f303x8.h"
 #include <stdint.h>
 
+#include "PLL.h"
 #include "LED.h"
 #include "I2C.h"
 #include "MAX30101.h"
 
 #include "arm_math.h"
 
+#define BUFFER_SIZE         8  /**< Number of samples to read from FIFO per interrupt (max 32) */
+#define SYSTICK_FREQ_HZ     20 /**< SysTick interrupt frequency (Hz) */
+
+uint8_t sensor_mode = 0;  /**< Global variable to track current sensor mode (0 = SPO2, 1 = MuscleOx) */
+
 uint32_t counter = 0;  /**< Debug counter for main loop iterations (unused in release) */
-uint32_t ticks = 0;    /**< Interrupt tick counter (incremented per 100 ms SysTick) */
-
-/**
- * @brief Raw FIFO data from sensor (intermediate, rarely needed directly)
- * @details 32-sample circular buffer to store raw 6-byte samples from MAX30101 FIFO.
- *          Typical usage: Diagnostic, direct ADC access, custom processing.
- *          @note Memory: 8 samples × 6 bytes = 48 bytes
- */
-MAX30101_Sample MAX30101_FIFO_Buffer[8];
-
-/**
- * @brief 16-bit ADC counts (intermediate format)
- * @details 32-sample buffer for unsigned integer ADC values (0–65535).
- *          Typical usage: Custom scaling, direct DAC output, calibration debug.
- *          @note Memory: 8 samples × 6 bytes = 48 bytes
- */
-MAX30101_SampleData MAX30101_SampleDataBuffer[8];
+uint32_t ticks = 0;    /**< Interrupt tick counter (incremented per 50 ms SysTick at 20 Hz) */
 
 /**
  * @brief FINAL PROCESSED DATA: Calibrated current in nanoamps (nA)
@@ -43,12 +33,13 @@ MAX30101_SampleData MAX30101_SampleDataBuffer[8];
  *          This is the primary output buffer for post-processing and external transmission.
  *          Updated by SysTick ISR approximately every 100 ms (variable latency based on FIFO fill).
  *          @see SysTick_Handler
- *          @note Memory: 8 samples × 12 bytes (3 × float32_t) = 96 bytes
+ *          @note MuscleOx mode memory: 8 samples × 12 bytes (3 × float32_t) = 96 bytes
+ *          @note SpO2 mode memory: 8 samples × 8 bytes (2 × float32_t) = 64 bytes
  *          @note Typically accessed in main loop after ISR completion
  */
-MAX30101_SampleCurrent MAX30101_SampleCurrentBuffer[8];
+MAX30101_SampleCurrent MAX30101_SampleCurrentBuffer[BUFFER_SIZE];
+MAX30101_SampleCurrentSpO2 MAX30101_SampleCurrentSpO2Buffer[BUFFER_SIZE];
 
-void clk_config(void);
 
 /**
  * @brief System initialization and main control loop
@@ -56,8 +47,8 @@ void clk_config(void);
  *          1. **Clock**: PLL to 64 MHz (HSI 8 MHz × 16)
  *          2. **GPIO**: Status LED on PB3 (push-pull output)
  *          3. **I2C1**: 400 kHz speed on PB6 (SCL), PB7 (SDA)
- *          4. **Sensor**: MAX30101 NIRS configuration with 100 Hz sampling
- *          5. **Timer**: SysTick configured for 100 ms interrupts
+ *          4. **Sensor**: MAX30101 NIRS/SpO2 configuration with appropriate sample rate
+ *          5. **Timer**: SysTick configured for 50 ms interrupts (SYSTICK_FREQ_HZ = 20)
  *
  *          After initialization, enters infinite loop that continuously increments
  *          a debug counter. Real work happens in SysTick_Handler() ISR.
@@ -82,10 +73,14 @@ int main() {
     LED_config();
     // Configure I2C1 for communication with the MAX30101 sensor
     I2C1_Config();
-    // Initialize MAX30101 for muscle oxygenation with medium LED power
-    MAX30101_InitMuscleOx(0x4B); 
-    // Configure SysTick to generate an interrupt every 100 ms
-    SysTick_Config(SystemCoreClock / 10);
+    if(sensor_mode)
+        // Initialize MAX30101 for muscle oxygenation measurement with medium LED power
+        MAX30101_InitMuscleOx(0x4B);
+    else
+        // Initialize MAX30101 for SPO2 measurement with low LED power
+        MAX30101_InitSPO2Lite(0x4B);
+    // Configure SysTick to generate an interrupt at SYSTICK_FREQ_HZ (default 20 Hz = 50 ms)
+    SysTick_Config(SystemCoreClock / SYSTICK_FREQ_HZ);
 
     for (;;) {
         counter++;
@@ -93,7 +88,7 @@ int main() {
 }
 
 /**
- * @brief SysTick Timer Interrupt Service Routine (100 ms period)
+ * @brief SysTick Timer Interrupt Service Routine (50 ms period)
  * @details Core real-time data acquisition routine:
  *          1. Increments `ticks` counter
  *          2. Queries MAX30101 FIFO for new samples
@@ -114,7 +109,7 @@ int main() {
  *       Upon samples available:
  *       - Populates MAX30101_SampleCurrentBuffer[] with up to 32 calibrated samples
  *       - Sample count in local variable `available_samples`
- *       - Data remains in buffer until next ISR overwrites (100 ms window)
+ *       - Data remains in buffer until next ISR overwrites (50 ms window)
  *
  * @timing
  *       - Sample freshness: 0–100 ms (age of data in buffer)
@@ -138,72 +133,14 @@ void SysTick_Handler(void) {
     ticks++;
     uint8_t available_samples = MAX30101_GetNumAvailableSamples();
     if (available_samples > 0) {
-        // Read available samples from the MAX30101 FIFO in float format (nA) into the global buffer
-        MAX30101_ReadFIFO_Current(MAX30101_SampleCurrentBuffer, available_samples);
+        if(sensor_mode) {
+            // MuscleOx: 3-channel read path
+            MAX30101_ReadFIFO_Current(MAX30101_SampleCurrentBuffer, available_samples);
+        } else {
+            // SPO2: 2-channel read path
+            MAX30101_ReadFIFO_CurrentSpO2(MAX30101_SampleCurrentSpO2Buffer, available_samples);
+        }
     }
     LED_Toggle();
 
-}
-
-/**
- * @brief Configure STM32F303K8 system clock to 64 MHz via PLL
- * @details PLL configuration chain:
- *          - **Input**: 8 MHz HSI oscillator (internal, always available)
- *          - **Divider**: /2 in PLL block (built-in)
- *          - **Multiplier**: MUL[3:0] = 0x0E (multiply by 16)
- *          - **Output**: (8 MHz / 2) × 16 = 64 MHz
- *          - **System Clock**: PLL output becomes SYSCLK
- *          - **Flash Timing**: 2 wait states for 48 < HCLK ≤ 72 MHz
- *          - **APB1 Divider**: HCLK/2 (32 MHz for most peripherals, incl. I2C)
- *
- * @param None
- * @return void
- *
- * @operations
- *       1. RCC->CFGR |= 0xE<<18 (PLLMUL configuration)
- *       2. FLASH->ACR |= 0x2 (Latency = 2 cycles)
- *       3. RCC->CR |= RCC_CR_PLLON (Enable PLL oscillator)
- *       4. Wait for RCC_CR_PLLRDY flag
- *       5. RCC->CFGR |= 0x402 (SW[1:0]=10 for PLL, PPRE1[2:0]=100 for APB1/2)
- *       6. Wait for RCC_CFGR_SWS_PLL status
- *       7. SystemCoreClockUpdate() (Update HAL clock variable)
- *
- * @timing
- *       - PLL lock time: ~100 µs (measured in hardware)
- *       - Total configuration time: <1 ms
- *       - Blocking: Yes (waits for PLL_RDY and SWS flags)
- *
- * @side_effects
- *       - SYSCLK becomes 64 MHz (all core and bus clocks scale accordingly)
- *       - I2C1 clock: 32 MHz / (I2C prescaler) ≈ 400 kHz
- *       - SysTick frequency scales to HCLK (timer reload values adapt)
- *       - Power consumption increases (~60 mA typical at 64 MHz vs 30 mA at 8 MHz)
- *
- * @warning
- *       - PLL must be configured BEFORE any I2C or timer operations
- *       - Changing clock mid-operation may corrupt ongoing communications
- *       - Requires FLASH latency adjustment or reads may fail
- *
- * @perf_note
- *       - 64 MHz is ~8× faster than default 8 MHz HSI
- *       - I2C bus speed 400 kHz achievable only with sufficient SYSCLK
- *       - Sampling rate limited more by I2C than by CPU
- *
- * @example
- *   // Called from main() to enable high-speed operation
- *   clk_config();
- *   // Now SYSCLK = 64 MHz, I2C/SPI significantly faster
- */
-void clk_config(void){
-	// PLLMUL <- 0x0E (PLL input clock x 16 --> (8 MHz / 2) * 16 = 64 MHz )  
-	RCC->CFGR |= 0xE<<18;
-	// Flash Latency, two wait states for 48<HCLK<=72 MHz
-	FLASH->ACR |= 0x2;
-	// PLLON <- 0x1 
-    RCC->CR |= RCC_CR_PLLON;
-	while (!(RCC->CR & RCC_CR_PLLRDY));	
-	// SW<-0x02 (PLL as System Clock), HCLK not divided, PPRE1<-0x4 (APB1 <- HCLK/2), APB2 not divided 
-	RCC->CFGR |= 0x402;
-	while (!(RCC->CFGR & RCC_CFGR_SWS_PLL));
-	SystemCoreClockUpdate();	
 }

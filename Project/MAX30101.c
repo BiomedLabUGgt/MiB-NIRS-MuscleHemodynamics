@@ -11,23 +11,23 @@
  *          - FIFO Configuration: Averaging 8, rollover enabled
  *          - LED Power: Low (minimal power draw, suitable for wearables)
  *          - Temperature Sensor: Enabled
- * @param None
+ * @param ledPower - LED current control register value (0x00 to 0xFF)
  * @return void
  * @note Suitable for battery-powered wearable applications.
  *       Call this once during initialization before reading samples.
  * @see MAX30101_InitMuscleOx
  * @example
- *   MAX30101_InitSPO2Lite();
+ *   MAX30101_InitSPO2Lite(0x18);
  *   uint8_t samples = MAX30101_GetNumAvailableSamples();
  */
-void MAX30101_InitSPO2Lite(void){
+void MAX30101_InitSPO2Lite(uint8_t ledPower){
     I2C1_Write(SENSOR_ADDR, FIFO_CONFIG, 0x4F);      // FIFO avg 8, FIFO rollover enabled
     I2C1_Write(SENSOR_ADDR, MODE_CONFIG, 0x03);      // SPO2 Mode (Red + IR)
     I2C1_Write(SENSOR_ADDR, SPO2_CONFIG, 0x23);      // 2048 range, sample rate 50 Hz, pulse width 215 (16 bits)
     I2C1_Write(SENSOR_ADDR, FIFO_READPTR, 0x0);      // Reset FIFO read pointer
     I2C1_Write(SENSOR_ADDR, FIFO_WRITPTR, 0x0);      // Reset FIFO write pointer
-    I2C1_Write(SENSOR_ADDR, LED1_PAMPLI, 0x18);      // Red LED power (low)
-    I2C1_Write(SENSOR_ADDR, LED2_PAMPLI, 0x18);      // IR LED power (low)
+    I2C1_Write(SENSOR_ADDR, LED1_PAMPLI, ledPower);  // Red LED power
+    I2C1_Write(SENSOR_ADDR, LED2_PAMPLI, ledPower);  // IR LED power
     I2C1_Write(SENSOR_ADDR, DIE_TEMPCFG, 0x01);      // Enable temperature sensor
 }
 
@@ -250,5 +250,72 @@ void MAX30101_ReadFIFO_Current(MAX30101_SampleCurrent *samples, uint8_t num_samp
         
         temp = ((uint16_t)fifo_data[4] << 8) | fifo_data[5];
         samples[i].green = (float32_t)temp * MAX30101_CURRENT_LSB_NA;
+    }
+}
+
+/**
+ * @brief Read raw FIFO data in SpO2 mode from MAX30101
+ * @details SpO2 mode streams only Red and IR 2-byte samples.
+ *          Each complete sample is 4 bytes: Red(2B) IR(2B).
+ * @param samples - [out] Pointer to buffer of MAX30101_SampleSpO2 structures to populate
+ * @param num_samples - [in] Number of complete samples to read (max 32)
+ * @return void
+ * @warning Ensure buffer has capacity for num_samples structures.
+ * @see MAX30101_ReadFIFO_CurrentSpO2, MAX30101_ConvertSampleToUint16SpO2
+ */
+void MAX30101_ReadFIFO_SPO2(MAX30101_SampleSpO2 *samples, uint8_t num_samples){
+    uint8_t i = 0;
+    uint8_t fifo_data[4];  // 4 bytes per sample in SpO2 mode (Red + IR)
+
+    for (i = 0; i < num_samples; i++) {
+        I2C1_Read(SENSOR_ADDR, FIFO_DATAREG, fifo_data, 4);
+
+        samples[i].red[0] = fifo_data[0];
+        samples[i].red[1] = fifo_data[1];
+        
+        samples[i].ir[0] = fifo_data[2];
+        samples[i].ir[1] = fifo_data[3];
+    }
+}
+
+/**
+ * @brief Convert raw SpO2 sample bytes to 16-bit ADC counts
+ * @param sample_in - [in] Pointer to MAX30101_SampleSpO2 with raw data
+ * @param sample_out - [out] Pointer to MAX30101_SampleDataSpO2 for converted counts
+ */
+void MAX30101_ConvertSampleToUint16SpO2(MAX30101_SampleSpO2 *sample_in, MAX30101_SampleDataSpO2 *sample_out){
+    sample_out->red = ((uint16_t)sample_in->red[0] << 8) | ((uint16_t)sample_in->red[1]);
+    sample_out->ir  = ((uint16_t)sample_in->ir[0]  << 8) | ((uint16_t)sample_in->ir[1]);
+}
+
+/**
+ * @brief Convert 16-bit SpO2 ADC samples to calibrated current in nA
+ * @param sample_in - [in] Pointer to MAX30101_SampleDataSpO2 with ADC counts
+ * @param sample_out - [out] Pointer to MAX30101_SampleCurrentSpO2 for nA values
+ */
+void MAX30101_ConvertUint16ToCurrentSpO2(MAX30101_SampleDataSpO2 *sample_in, MAX30101_SampleCurrentSpO2 *sample_out){
+    sample_out->red = (float32_t)sample_in->red * MAX30101_CURRENT_LSB_NA;
+    sample_out->ir  = (float32_t)sample_in->ir  * MAX30101_CURRENT_LSB_NA;
+}
+
+/**
+ * @brief Optimized SpO2 FIFO read with direct current conversion
+ * @details Reads 4-byte SpO2 samples and converts to nA in one pass.
+ * @param samples - [out] Pointer to buffer of MAX30101_SampleCurrentSpO2 to populate
+ * @param num_samples - [in] Number of complete samples to read (max 32)
+ */
+void MAX30101_ReadFIFO_CurrentSpO2(MAX30101_SampleCurrentSpO2 *samples, uint8_t num_samples){
+    uint8_t fifo_data[4];
+    uint8_t i;
+    uint16_t temp;
+
+    for (i = 0; i < num_samples; i++) {
+        I2C1_Read(SENSOR_ADDR, FIFO_DATAREG, fifo_data, 4);
+
+        temp = ((uint16_t)fifo_data[0] << 8) | fifo_data[1];
+        samples[i].red = (float32_t)temp * MAX30101_CURRENT_LSB_NA;
+
+        temp = ((uint16_t)fifo_data[2] << 8) | fifo_data[3];
+        samples[i].ir = (float32_t)temp * MAX30101_CURRENT_LSB_NA;
     }
 }

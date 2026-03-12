@@ -92,12 +92,55 @@ typedef struct {
 typedef struct {
     float32_t red;       /**< Red LED current (0–2048 nA) */
     float32_t ir;        /**< IR LED current (0–2048 nA) */
-    float32_t green;     /**< Green LED current (0–2048 nA) */
+    float32_t green;     /**<Green LED current (0–2048 nA) */
 } MAX30101_SampleCurrent;
 
-void MAX30101_InitSPO2Lite(void);
+/**
+ * @struct MAX30101_SampleSpO2
+ * @brief Raw FIFO sample data for SpO2 mode (4 bytes)
+ * @details Dual-LED mode uses Red + IR channels.
+ *          Format: 2 channels × 2 bytes (MSB, LSB)
+ *          Total: 4 bytes per sample.
+ * @note Use MAX30101_ReadFIFO() with SpO2 mode or a dedicated SpO2 read function
+ */
+typedef struct {
+    uint8_t red[2];      /**< Red LED raw bytes (MSB, LSB) */
+    uint8_t ir[2];       /**< IR LED raw bytes (MSB, LSB) */
+} MAX30101_SampleSpO2;
+
+/**
+ * @struct MAX30101_SampleDataSpO2
+ * @brief 16-bit ADC counts for SpO2 mode
+ * @details Dual-LED data format after byte packing.
+ * @note Use MAX30101_ConvertSampleToUint16() with SpO2 struct or a SpO2 conversion routine
+ */
+typedef struct {
+    uint16_t red;        /**< Red ADC 16-bit value */
+    uint16_t ir;         /**< IR ADC 16-bit value */
+} MAX30101_SampleDataSpO2;
+
+/**
+ * @struct MAX30101_SampleCurrentSpO2
+ * @brief Calibrated photodiode current in nA for SpO2 mode
+ * @details Same 7.81 pA LSB scaling as multi-LED mode.
+ */
+typedef struct {
+    float32_t red;       /**< Red current (0–2048 nA) */
+    float32_t ir;        /**< IR current (0–2048 nA) */
+} MAX30101_SampleCurrentSpO2;
+
+void MAX30101_InitSPO2Lite(uint8_t ledPower);
 void MAX30101_InitMuscleOx(uint8_t ledPower);
+
 uint8_t MAX30101_GetNumAvailableSamples(void);
+
+// SpO2-specific FIFO/format helpers (dual-red/IR channel mode)
+void MAX30101_ReadFIFO_SPO2(MAX30101_SampleSpO2 *samples, uint8_t num_samples);
+void MAX30101_ConvertSampleToUint16SpO2(MAX30101_SampleSpO2 *sample_in, MAX30101_SampleDataSpO2 *sample_out);
+void MAX30101_ConvertUint16ToCurrentSpO2(MAX30101_SampleDataSpO2 *sample_in, MAX30101_SampleCurrentSpO2 *sample_out);
+void MAX30101_ReadFIFO_CurrentSpO2(MAX30101_SampleCurrentSpO2 *samples, uint8_t num_samples);
+
+// Muscle oxygenation-specific FIFO/format helpers (multi-LED mode)
 void MAX30101_ReadFIFO(MAX30101_Sample *samples, uint8_t num_samples);
 void MAX30101_ReadFIFO_Current(MAX30101_SampleCurrent *samples, uint8_t num_samples);
 void MAX30101_ConvertSampleToUint16(MAX30101_Sample *sample_in, MAX30101_SampleData *sample_out);
