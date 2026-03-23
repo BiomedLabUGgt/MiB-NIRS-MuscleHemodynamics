@@ -31,7 +31,7 @@
 #define 	FIFO_CONFIG 	 	0x08
 #define     MODE_CONFIG			0x09
 #define     SPO2_CONFIG			0x0A
-#define     SPO2_CONFIG			0x0A
+#define     PULSEWIDTH_CONFIG	0x0B
 #define     LED1_PAMPLI			0x0C
 #define     LED2_PAMPLI			0x0D
 #define     LED3_PAMPLI			0x0E

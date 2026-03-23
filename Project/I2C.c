@@ -20,9 +20,9 @@
  *          5. Enable I2C1
  *
  * ### GPIO Configuration (PB6 = SCL, PB7 = SDA)
- *  - MODER: [14:12]=10 (Alternate Function), [14:12]=10
- *  - OTYPER: [7]=1 (Open-drain), [6]=1
- *  - AFR[0]: [31:28]=0100 (AF4), [27:24]=0100 (AF4)
+ *  - MODER: [14:12]=10 (Alternate Function for PB6), [16:14]=10 (Alternate Function for PB7)
+ *  - OTYPER: [7]=1 (Open-drain for PB7), [6]=1 (Open-drain for PB6)
+ *  - AFR[0]: [31:28]=0100 (AF4 for PB7), [27:24]=0100 (AF4 for PB6)
  *
  * ### I2C TIMINGR = 0x00C50F26 (for APB1 = 32 MHz, target 400 kHz)
  *  - PRESC[3:0] = 0 (Prescaler = 1)

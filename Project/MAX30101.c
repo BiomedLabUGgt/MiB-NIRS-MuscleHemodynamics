@@ -54,16 +54,16 @@ void MAX30101_InitSPO2Lite(uint8_t ledPower) {
  * @details Configures sensor for Near-Infrared Spectroscopy with 3 simultaneous LEDs.
  *          Optimal for non-invasive tissue oxygenation and perfusion monitoring.
  *          - Mode: Multi-LED (Red + IR + Green)
- *          - Sample Rate: 100 Hz
+ *          - Sample Rate: 50 Hz (via SPO2_CONFIG = 0x01)
  *          - ADC Resolution: 16-bit
- *          - FIFO Configuration: Averaging 8, rollover enabled
- *          - Temperature Sensor: Enabled
+ *          - FIFO Configuration: No averaging, rollover enabled
+ *          - Temperature Sensor: Available (disabled by default)
  * @param ledPower - LED current control register value (0x00 to 0xFF)
  *                  Range: 4.4 mA to 50.6 mA in ~0.2 mA steps
  *                  Typical: 0x4B (~20 mA), 0x18 (~10 mA) for low power
  * @return void
- * @note Higher sample rate (100 Hz) vs SPO2Lite (50 Hz) provides better temporal resolution.
- *       Three-LED configuration increases tissue penetration depth for muscle assessment.
+ * @note Three-LED configuration increases tissue penetration depth for muscle assessment.
+ *       Same 50 Hz sample rate as SPO2Lite but with additional Green LED for enhanced NIRS analysis.
  * @see MAX30101_InitSPO2Lite
  * @example
  *   MAX30101_InitMuscleOx(0x4B);  // 20 mA LED power

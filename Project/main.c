@@ -67,7 +67,7 @@ MAX30101_SampleCurrentSpO2 MAX30101_SingleSampleCurrentSpO2;
  * @see clk_config, LED_config, I2C1_Config, MAX30101_InitMuscleOx, SysTick_Handler
  * @example
  *   // main() initializes and waits for interrupts
-   // SysTick fires every 20 ms with MAXFIFO reads
+   // SysTick fires every 20 ms with MAX30101 FIFO reads
  */
 int main(void) {
     // Configure system clock to 64 MHz via PLL
@@ -77,7 +77,7 @@ int main(void) {
     // Configure I2C1 (400 kHz) for MAX30101 communication
     I2C1_Config();
     // Initialize MAX30101 for SpO2 measurement with medium LED power
-    MAX30101_InitSPO2Lite(0x4B);  
+    MAX30101_InitSPO2Lite(0x18);  // 0x18 = ~10 mA LED current for low power operation
     // Configure USART2 (PA2=TX, PA15=RX) at 230400 baud for data transmission
     UART_Config(230400);
     // Configure SysTick for 20 ms interrupts (SYSTICK_FREQ_HZ = 50 Hz)
@@ -111,10 +111,10 @@ int main(void) {
  *       Upon samples available:
  *       - Populates MAX30101_SampleCurrentSpO2Buffer[] with up to 8 calibrated samples
  *       - Sample count in local variable `available_samples`
-       - Data remains in buffer until next ISR overwrites (20 ms window)
+ *       - Data remains in buffer until next ISR overwrites (20 ms window)
  *
  * @timing
-       - Sample freshness: 0–20 ms (age of data in buffer)
+ *       - Sample freshness: 0–20 ms (age of data in buffer)
  *       - FIFO latency: Variable; depends on sample rate (100 Hz) and read interval
  *       - At 100 Hz rate with 20 ms polling (50 Hz ISR): Expect 2–3 samples per interrupt
  *

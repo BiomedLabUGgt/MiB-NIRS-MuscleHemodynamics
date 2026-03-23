@@ -14,9 +14,9 @@
  * @brief Initialize GPIO port B, pin 3 as push-pull output
  * @details Complete GPIO setup for LED control:
  *          1. **Enable GPIOB peripheral clock** (AHB domain)
- *          2. **Configure PB3 mode** (and accidentally PB4) as output
- *          3. **Verify open-drain** disabled (push-pull mode, OTYPER[3]=0)
- *          4. **Verify speed** at default (Medium ~2 MHz slew rate)
+ *          2. **Configure PB3 mode** as output (push-pull)
+ *          3. **Configure PB4 mode** as output (allocated for I2C1 alternate function)
+ *          4. **Ensure push-pull type** (OTYPER[3]=0, OTYPER[4]=0)
  *          5. Ready for ODR writes (LED_On, LED_Off, LED_Toggle)
  *
  * ### Register Operations
@@ -27,13 +27,12 @@
  *
  *  - GPIOB->MODER &= ~((3<<6)|(3<<8))
  *    Clear bits [7:6] (PB3 mode) and [9:8] (PB4 mode)
- *    Purpose: Pre-existing driver uses PB4 for I2C alt-function
- *    Setting bits to 00 = input mode (will be overridden next)
+ *    Purpose: Reset both pin modes to input (00)
  *
  *  - GPIOB->MODER |= (1<<6) | (1<<8)
  *    Set bits [6]=1 (PB3 mode[0]=1) and [8]=1 (PB4 mode[0]=1)
  *    Result: MODER[7:6] = 01 (PB3 = output), MODER[9:8] = 01 (PB4 = output)
- *    Note: Bug? PB4 should be I2C; but empirically works with I2C after this
+ *    Note: PB4 is reconfigured by I2C1_Config() to alternate function (AF4) after this call
  *
  * ### GPIO State After Config
  *  | Feature | PB3 | PB4 |
@@ -55,9 +54,9 @@
  *
  * @critical_notes
  *  - Must be called AFTER clk_config() to ensure SYSCLK is stable at 64 MHz
- *  - I2C1_Config() will overrun PB4 MODER bits but I2C still works (hardware multiplexing)
- *  - Order of initialization: clk_config() → LED_config() → I2C1_Config()
- *  - Calling LED_config() after I2C1_Config() may disrupt I2C (MODER overwrite)
+ *  - I2C1_Config() must be called AFTER this function to properly configure PB4 as I2C alternate function
+ *  - Initialization order: clk_config() → LED_config() → I2C1_Config()
+ *  - Do not call LED_config() after I2C1_Config() as it overwrites PB4 alternate function configuration
  *
  * @side_effects
  *  - GPIOB clock permanently enabled (not disabled in low-power mode by default)
