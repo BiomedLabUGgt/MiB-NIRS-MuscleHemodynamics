@@ -26,8 +26,7 @@
 #define BUFFER_SIZE         8  /**< Number of samples to read from FIFO per interrupt (max 32) */
 #define SYSTICK_FREQ_HZ     50 /**< SysTick interrupt frequency (Hz) */
 
-uint32_t counter = 0;  /**< Debug counter for main loop iterations (unused in release) */
-uint32_t ticks = 0;    /**< Interrupt tick counter (incremented per 20 ms SysTick at 50 Hz) */
+uint8_t data_available = 0; /**< Flag set by SysTick_Handler when new data is available for processing in main loop */
 uint8_t available_samples; /**< Number of samples currently available in MAX30101 FIFO (updated in SysTick_Handler) */
 
 char tx_buffer[100];  /**< General-purpose buffer for UART transmission */
@@ -75,25 +74,28 @@ int main(void) {
     // Configure I2C1 (400 kHz) for MAX30101 communication
     I2C1_Config();
     // Initialize MAX30101 for SpO2 measurement with medium LED power
-    MAX30101_InitSPO2Lite(40.0f,3.2f);  // 3.2 mA LED current for low power operation (up to 51 mA max)
-    // Configure USART2 (PA2=TX, PA15=RX) at 230400 baud for data transmission
-    UART_Config(230400);
+    MAX30101_InitSPO2Lite(1.6f,1.6f);  // 1.6 mA LED current for low power operation (up to 51 mA max)
+    // Configure USART2 (PA2=TX, PA15=RX) at 460800 baud for data transmission
+    UART_Config(460800);
     // Configure SysTick for 20 ms interrupts (SYSTICK_FREQ_HZ = 50 Hz)
     SysTick_Config(SystemCoreClock / SYSTICK_FREQ_HZ);
     
     // Main loop: real work happens in SysTick_Handler ISR
     for (;;) {
-        counter++;  // Debug counter (unused in release)
+        if(data_available) {
+            sprintf(tx_buffer, "%.6f,%.6f\r\n", MAX30101_SingleSampleCurrentSpO2.red, MAX30101_SingleSampleCurrentSpO2.ir);
+            USART2_putString(tx_buffer);
+            data_available = 0; // Reset flag after transmission
+        }
     }
 }
 
 /**
  * @brief SysTick Timer Interrupt Service Routine (20 ms period)
  * @details Core real-time data acquisition routine:
- *          1. Increments `ticks` counter
- *          2. Queries MAX30101 FIFO for new samples
- *          3. If samples available: reads and converts to nanoamps in one call
- *          4. Toggles status LED (visual feedback)
+ *          1. Queries MAX30101 FIFO for new samples
+ *          2. If samples available: reads and converts to nanoamps in one call
+ *          3. Toggles status LED (visual feedback)
  *
  *          This ISR runs non-preemptively (highest priority) approximately every
           20 milliseconds, making it ideal for time-critical sensor polling.
@@ -102,7 +104,7 @@ int main(void) {
  * @return void
  * @note ISR Context
  *       - Execution time: ~1–2 ms (I2C reads dominate; ~0.5 ms per sample)
- *       - Called at SysTick exception (cannot nest itself)
+ *       - Called at SysTick interrupt (cannot nest itself)
  *       - All registers preserved; no clobbering of main loop state
  *
  * @data_output
@@ -113,8 +115,8 @@ int main(void) {
  *
  * @timing
  *       - Sample freshness: 0–20 ms (age of data in buffer)
- *       - FIFO latency: Variable; depends on sample rate (100 Hz) and read interval
- *       - At 100 Hz rate with 20 ms polling (50 Hz ISR): Expect 2–3 samples per interrupt
+ *       - FIFO latency: Variable; depends on sample rate (50 Hz) and read interval
+ *       - At 100 Hz rate with 20 ms polling (50 Hz ISR): Expect 1–2 samples per interrupt
  *
  * @warning
  *       - Race condition possible if main loop reads buffer while ISR writes
@@ -124,14 +126,12 @@ int main(void) {
  * @see MAX30101_GetNumAvailableSamples, MAX30101_ReadFIFO_Current, LED_Toggle
  * @example
  *   // ISR fires every 20 ms (50 Hz):
- *   // ticks++ (incremented 50 times per second)
- *   // MAX30101_SampleCurrentBuffer[] updated with fresh nA values
+ *   // MAX30101_SingleSampleCurrentSpO2 updated with fresh nA values
  *   // LED toggles (20 ms on, 20 ms off = 25 Hz blink)
  */  
 
 void SysTick_Handler(void) {
     uint8_t i;
-    ticks++;
     LED_Toggle();
     available_samples = MAX30101_GetNumAvailableSamples();
     if (available_samples > 0) {
@@ -140,6 +140,5 @@ void SysTick_Handler(void) {
         }
     }
     MAX30101_UpdateReadPointer(available_samples);
-    sprintf(tx_buffer, "%.6f,%.6f\r\n", MAX30101_SingleSampleCurrentSpO2.red, MAX30101_SingleSampleCurrentSpO2.ir);
-    USART2_putString(tx_buffer);
+    data_available = 1; // Set flag for main loop to process new data
 }
