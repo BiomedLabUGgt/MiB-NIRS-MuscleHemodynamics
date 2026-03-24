@@ -83,7 +83,7 @@ int main(void) {
     // Main loop: real work happens in SysTick_Handler ISR
     for (;;) {
         if(data_available) {
-            sprintf(tx_buffer, "%.6f,%.6f\r\n", MAX30101_SingleSampleCurrentSpO2.red, MAX30101_SingleSampleCurrentSpO2.ir);
+            sprintf(tx_buffer, "%.3f,%.3f\r\n", MAX30101_SingleSampleCurrentSpO2.red, MAX30101_SingleSampleCurrentSpO2.ir);
             USART2_putString(tx_buffer);
             data_available = 0; // Reset flag after transmission
         }
