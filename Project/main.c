@@ -11,6 +11,7 @@
  * @see clk_config, LED_config, I2C1_Config, MAX30101_InitNIRSLite, SysTick_Handler
  */
 
+#include "arm_math_types.h"
 #include "stm32f303x8.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -24,6 +25,7 @@
 #include "arm_math.h"
 
 #define SYSTICK_FREQ_HZ     50 /**< SysTick interrupt frequency (Hz) */
+#define IIR_NUM_SECTIONS    2  /**< Number of biquad sections in the IIR filter */
 
 volatile uint8_t data_ready = 0; /**< Flag set by SysTick_Handler when new data is available for processing in main loop */
 
@@ -40,6 +42,25 @@ char tx_buffer[100];  /**< General-purpose buffer for UART transmission */
  */
 MAX30101_CurrentSample MAX30101_NIRS_SingleCurrentSample;
 MAX30101_CurrentSample MAX30101_NIRS_FilteredSingleCurrentSample; 
+
+
+/** Butterworth High-pass (dc-blocker) IIR Filter Coefficients 
+    * @details 4th-order Butterworth high-pass filter with 0.4 Hz cutoff frequency, designed using MATLAB's fdesign.highpass and implemented as a cascade of biquads.
+    *          Coefficients are in the form [b0, b1, b2, a1, a2] for each biquad section, with feedback coefficients negated for CMSIS-DSP compatibility.
+    *          The filter is applied to the raw current samples to remove DC offset and low-frequency drift before further processing.
+    *          @see iir_init, iir
+    *          @note Designed for a sampling frequency of 50 Hz (matching MAX30101 ODR)
+    *          @note Coefficients must be in single-precision float format for CMSIS-DSP
+*/
+const float32_t iirCoeffs[5 * IIR_NUM_SECTIONS] = {         
+    0.98855555f,    -1.9770899f,    0.98855555f,    1.9766545f,     -0.97754645f,
+    0.97310543f,    -1.9462072f,    0.97310543f,    1.9457787f,     -0.94663936f
+ };
+
+float32_t iirStatesRed[2 * IIR_NUM_SECTIONS] = {0}; /**< State buffer for the IIR filter, initialized to zero */
+arm_biquad_cascade_df2T_instance_f32 IIR_Red; /**< CMSIS-DSP IIR filter instance structure */
+float32_t iirStatesIR[2 * IIR_NUM_SECTIONS] = {0}; /**< State buffer for the IIR filter, initialized to zero */
+arm_biquad_cascade_df2T_instance_f32 IIR_IR; /**< CMSIS-DSP IIR filter instance structure */
 
 /**
  * @brief System initialization and main control loop
@@ -70,6 +91,9 @@ MAX30101_CurrentSample MAX30101_NIRS_FilteredSingleCurrentSample;
  *   // "1234.567,2345.678\r\n"  (Red nA, IR nA)
  */
 int main(void) {
+    // Initialize the IIR filter instance with coefficients and state buffer
+    arm_biquad_cascade_df2T_init_f32(&IIR_Red, IIR_NUM_SECTIONS, iirCoeffs, iirStatesRed);
+    arm_biquad_cascade_df2T_init_f32(&IIR_IR, IIR_NUM_SECTIONS, iirCoeffs, iirStatesIR);
     // Configure system clock to 64 MHz via PLL
     clk_config();
     // Configure GPIO port B pin 3 as push-pull output for LED
@@ -77,7 +101,7 @@ int main(void) {
     // Configure I2C1 (400 kHz) for MAX30101 communication
     I2C1_Config();
     // Initialize MAX30101 for NIRS measurement with medium LED power
-    MAX30101_InitNIRSLite(10.0f,10.0f);  // 10.0 mA LED current for low power operation (up to 51 mA max)
+    MAX30101_InitNIRSLite(32.0f,16.0f);  // 10.0 mA LED current for low power operation (up to 51 mA max)
     // Configure USART2 (PA2=TX, PA15=RX) at 460800 baud for data transmission
     UART_Config(460800);
     // Configure SysTick for 20 ms interrupts (SYSTICK_FREQ_HZ = 50 Hz)
@@ -86,8 +110,9 @@ int main(void) {
     // Main loop: real work happens in SysTick_Handler ISR
     for (;;) {
         if(data_ready) {
-            // put the CMSIS-DSP IIR filter here if desired, using MAX30101_NIRS_SingleCurrentSample as input
-            sprintf(tx_buffer, "%.4f,%.4f\r\n", MAX30101_NIRS_SingleCurrentSample.red, MAX30101_NIRS_SingleCurrentSample.ir);
+            arm_biquad_cascade_df2T_f32(&IIR_Red, (float32_t *)&MAX30101_NIRS_SingleCurrentSample.red, (float32_t *)&MAX30101_NIRS_FilteredSingleCurrentSample.red, 1);
+            arm_biquad_cascade_df2T_f32(&IIR_IR, (float32_t *)&MAX30101_NIRS_SingleCurrentSample.ir, (float32_t *)&MAX30101_NIRS_FilteredSingleCurrentSample.ir, 1);
+            sprintf(tx_buffer, "%.4f,%.4f\r\n", MAX30101_NIRS_FilteredSingleCurrentSample.red, MAX30101_NIRS_FilteredSingleCurrentSample.ir);
             USART2_putString(tx_buffer);
             data_ready = 0; // Reset flag after transmission
         }
