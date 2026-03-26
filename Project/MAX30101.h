@@ -8,7 +8,7 @@
  *          - 18-bit ADC with 4096 nA full-scale range
  *          - 32-sample FIFO with wrap-around support
  * @author Julio Fajardo, PhD
- * @date 2024-06-01
+ * @date 2026-03-26
  * @version 2.0
  */
 

@@ -4,7 +4,7 @@
  * @details Configures USART2 (PA2=TX, PA15=RX) at variable baud rate
  *          with blocking transmission support.
  * @author Julio Fajardo, PhD
- * @date 2024-06-01
+ * @date 2026-03-26
  * @version 2.0
  */
 

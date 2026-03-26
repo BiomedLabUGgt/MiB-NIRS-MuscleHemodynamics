@@ -3,7 +3,7 @@
  * @brief USART2 driver for MAX30101 data transmission
  * @details Configures USART2 (PA2=TX, PA15=RX) at variable baud rate with blocking transmission
  * @author Julio Fajardo, PhD
- * @date 2024-06-01
+ * @date 2026-03-26
  */
 
 #ifndef UART_H_

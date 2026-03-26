@@ -27,7 +27,7 @@
  *  2. **Read**: Master writes address, repeated START, reads N bytes (FIFO streaming)
  *
  * @author Julio Fajardo
- * @date 2024-06-01
+ * @date 2026-03-26
  * @version 2.0
  * @note For STM32F303K8 only. TIMINGR value 0x00C50F26 is specific to APB1 = 32 MHz
  * @todo Add error handling (NAK detection, bus timeout)

@@ -3,7 +3,7 @@
  * @brief GPIO-Based status LED control implementation for STM32F303K8
  * @details Simple push-pull GPIO driver for visual feedback LED on port PB3.
  * @author Julio Fajardo, PhD
- * @date 2024-06-01
+ * @date 2026-03-26
  * @version 2.0
  */
 

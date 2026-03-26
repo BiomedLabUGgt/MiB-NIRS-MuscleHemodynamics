@@ -6,8 +6,8 @@
  *          MAX30101 configured with dual LEDs (Red, IR) at 50 Hz sample rate and medium LED power
  *          for optimal tissue penetration in muscle oxygenation applications.
  * @author Julio Fajardo, PhD
- * @date 2024-06-01
- * @version 1.0
+ * @date 2026-03-26
+ * @version 2.0
  * @see clk_config, LED_config, I2C1_Config, MAX30101_InitNIRSLite, SysTick_Handler
  */
 

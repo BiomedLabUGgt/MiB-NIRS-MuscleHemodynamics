@@ -31,7 +31,7 @@
  *  4. LED_Toggle() → XORs ODR bit 3 (inverts state, called from SysTick ISR)
  *
  * @author Julio Fajardo
- * @date 2024-06-01
+ * @date 2026-03-26
  * @version 2.0
  * @note Non-critical component; LED failures do not impact sensor or data acquisition
  * @todo Add configurable blink patterns (multiple on/off cycles per ISR)

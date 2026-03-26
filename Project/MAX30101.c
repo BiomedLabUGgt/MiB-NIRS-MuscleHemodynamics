@@ -4,7 +4,7 @@
  * @details Complete driver for Maxim Integrated MAX30101 optical sensor supporting
  *          multi-LED and SpO2 measurement modes with I2C communication interface.
  * @author Julio Fajardo, PhD
- * @date 2024-06-01
+ * @date 2026-03-26
  * @version 2.0
  */
 
