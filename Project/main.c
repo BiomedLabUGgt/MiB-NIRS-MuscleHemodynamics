@@ -26,10 +26,12 @@
 
 #define SYSTICK_FREQ_HZ     50 /**< SysTick interrupt frequency (Hz) */
 #define IIR_NUM_SECTIONS    2  /**< Number of biquad sections in the IIR filter */
+#define FILTER_TYPE         0  /**< Filter type identifier (1 for high-pass Butterworth, 0 for First-Order IIR High-Pass (DC-Blocker): H(z) = (1 - z^-1) / (1 - alpha*z^-1) */
+#define APLHA               0.95f /**< Alpha coefficient for first-order IIR DC-Blocker (0.95 corresponds to fc ~0.4 Hz at 50 Hz sampling, 0.995 corresponds to fc ~0.04 Hz at 50 Hz sampling) */
 
-volatile uint8_t data_ready = 0; /**< Flag set by SysTick_Handler when new data is available for processing in main loop */
+volatile uint8_t data_ready = 1; /**< Flag set by SysTick_Handler when new data is available for processing in main loop */
 
-char tx_buffer[100];  /**< General-purpose buffer for UART transmission */
+char tx_buffer[128];  /**< General-purpose buffer for UART transmission */
 
 /**
  * @brief FINAL PROCESSED DATA: Calibrated current in nanoamps (nA)
@@ -40,12 +42,13 @@ char tx_buffer[100];  /**< General-purpose buffer for UART transmission */
  *          @note SpO2 mode memory: 8 samples × 8 bytes (2 × float32_t) = 64 bytes
  *          @note Typically accessed in main loop after ISR completion
  */
-MAX30101_CurrentSample MAX30101_NIRS_SingleCurrentSample;
-MAX30101_CurrentSample MAX30101_NIRS_FilteredSingleCurrentSample; 
 
+ /** Global variables for storing current samples */
+MAX30101_CurrentSample MAX30101_NIRS_SingleCurrentSample;
+MAX30101_CurrentSample MAX30101_NIRS_FilteredSingleCurrentSample;
 
 /** Butterworth High-pass (dc-blocker) IIR Filter Coefficients 
-    * @details 4th-order Butterworth high-pass filter with 0.4 Hz cutoff frequency, designed using MATLAB's fdesign.highpass and implemented as a cascade of biquads.
+    * @details 4th-order Butterworth high-pass filter with 0.04 Hz cutoff frequency, designed using MATLAB's fdesign.highpass and implemented as a cascade of biquads.
     *          Coefficients are in the form [b0, b1, b2, a1, a2] for each biquad section, with feedback coefficients negated for CMSIS-DSP compatibility.
     *          The filter is applied to the raw current samples to remove DC offset and low-frequency drift before further processing.
     *          @see iir_init, iir
@@ -62,24 +65,38 @@ arm_biquad_cascade_df2T_instance_f32 IIR_Red; /**< CMSIS-DSP IIR filter instance
 float32_t iirStatesIR[2 * IIR_NUM_SECTIONS] = {0}; /**< State buffer for the IIR filter, initialized to zero */
 arm_biquad_cascade_df2T_instance_f32 IIR_IR; /**< CMSIS-DSP IIR filter instance structure */
 
+/* First-order DC-Blocker states */
+float32_t w_red = 0.0f; /**< First-order DC-Blocker intermediate state for red channel */
+float32_t w_ir  = 0.0f; /**< First-order DC-Blocker intermediate state for IR channel */
+
 /**
  * @brief System initialization and main control loop
  * @details Initializes all peripherals in sequence:
  *          1. **Clock**: PLL to 64 MHz (HSI 8 MHz × 16)
  *          2. **GPIO**: Status LED on PB3 (push-pull output)
  *          3. **I2C1**: 400 kHz fast-mode on PB6 (SCL), PB7 (SDA)
- *          4. **Sensor**: MAX30101 NIRS Lite mode — Red + IR at 50 Hz, 1.6 mA each
+ *          4. **Sensor**: MAX30101 NIRS Lite mode — Red + IR at 50 Hz, 10.0 mA each
  *          5. **UART**: USART2 at 460800 baud (PA2=TX, PA15=RX)
  *          6. **Timer**: SysTick at 50 Hz (20 ms period), enabling the acquisition ISR
  *
- *          After initialization, the main loop waits for data_ready (set by SysTick ISR)
- *          and transmits each Red/IR sample pair over UART as a CSV string.
- *          All sensor acquisition runs in the ISR; main only handles transmission.
+ *          After initialization, the main loop waits for data_ready (set by SysTick ISR),
+ *          applies the selected high-pass filter to remove DC offset, and transmits each
+ *          filtered Red/IR sample pair over UART as a CSV string.
+ *          All sensor acquisition runs in the ISR; filtering and transmission run in main.
+ *
+ *          Two DC-removal filters are available, selected at compile time via FILTER_TYPE:
+ *          - **FILTER_TYPE 0** (default): First-order IIR DC-Blocker H(z) = (1 - z^-1) / (1 - alpha*z^-1),
+ *            alpha = 0.95, fc ~= 0.4 Hz, alpha = 0.995, fc ~= 0.04 Hz. Minimal CPU cost, suitable for resource-constrained operation.
+ *          - **FILTER_TYPE 1**: 4th-order Butterworth high-pass filter, fc = 0.04 Hz, implemented as a
+ *            cascade of 2 biquad sections via CMSIS-DSP. Maximally flat passband; preferred for
+ *            clean PPG signal extraction in NIRS applications.
  *
  * @param None
  * @return int - Never returns (infinite loop)
  * @note Initialization order is critical: I2C must be configured before MAX30101,
  *       and UART before SysTick to avoid transmitting before the port is ready.
+ *       When FILTER_TYPE == 1, arm_biquad_cascade_df2T_init_f32() must be called
+ *       after clk_config() to ensure the PLL and stack are stable.
  * @warning Enabling SysTick (last step) immediately arms the ISR. Any initialization
  *          that must complete before the first ISR fires should precede SysTick_Config().
  * @execution
@@ -87,15 +104,17 @@ arm_biquad_cascade_df2T_instance_f32 IIR_IR; /**< CMSIS-DSP IIR filter instance 
  *   - Time to first ISR: ~20 ms after SysTick_Config()
  * @see clk_config, LED_config, I2C1_Config, MAX30101_InitNIRSLite, SysTick_Handler
  * @example
- *   // After init, main loop outputs one line per sample at 50 Hz:
- *   // "1234.567,2345.678\r\n"  (Red nA, IR nA)
+ *   // After init, main loop outputs one filtered line per sample at 50 Hz:
+ *   // "1234.567,2345.678\r\n"  (Red nA, IR nA -- DC removed)
  */
 int main(void) {
-    // Initialize the IIR filter instance with coefficients and state buffer
-    arm_biquad_cascade_df2T_init_f32(&IIR_Red, IIR_NUM_SECTIONS, iirCoeffs, iirStatesRed);
-    arm_biquad_cascade_df2T_init_f32(&IIR_IR, IIR_NUM_SECTIONS, iirCoeffs, iirStatesIR);
     // Configure system clock to 64 MHz via PLL
     clk_config();
+     #if FILTER_TYPE == 1
+        // Coefficients already defined for high-pass Butterworth
+        arm_biquad_cascade_df2T_init_f32(&IIR_Red, IIR_NUM_SECTIONS, iirCoeffs, iirStatesRed);
+        arm_biquad_cascade_df2T_init_f32(&IIR_IR, IIR_NUM_SECTIONS, iirCoeffs, iirStatesIR);
+    #endif
     // Configure GPIO port B pin 3 as push-pull output for LED
     LED_config();
     // Configure I2C1 (400 kHz) for MAX30101 communication
@@ -110,8 +129,18 @@ int main(void) {
     // Main loop: real work happens in SysTick_Handler ISR
     for (;;) {
         if(data_ready) {
-            arm_biquad_cascade_df2T_f32(&IIR_Red, (float32_t *)&MAX30101_NIRS_SingleCurrentSample.red, (float32_t *)&MAX30101_NIRS_FilteredSingleCurrentSample.red, 1);
-            arm_biquad_cascade_df2T_f32(&IIR_IR, (float32_t *)&MAX30101_NIRS_SingleCurrentSample.ir, (float32_t *)&MAX30101_NIRS_FilteredSingleCurrentSample.ir, 1);
+            #if FILTER_TYPE == 1
+                arm_biquad_cascade_df2T_f32(&IIR_Red, (float32_t *)&MAX30101_NIRS_SingleCurrentSample.red, (float32_t *)&MAX30101_NIRS_FilteredSingleCurrentSample.red, 1);
+                arm_biquad_cascade_df2T_f32(&IIR_IR, (float32_t *)&MAX30101_NIRS_SingleCurrentSample.ir, (float32_t *)&MAX30101_NIRS_FilteredSingleCurrentSample.ir, 1);
+            #else
+                float32_t w_red_new = MAX30101_NIRS_SingleCurrentSample.red + APLHA * w_red;
+                MAX30101_NIRS_FilteredSingleCurrentSample.red = w_red_new - w_red;
+                w_red = w_red_new;
+
+                float32_t w_ir_new = MAX30101_NIRS_SingleCurrentSample.ir + APLHA * w_ir;
+                MAX30101_NIRS_FilteredSingleCurrentSample.ir = w_ir_new - w_ir;
+                w_ir = w_ir_new;
+            #endif
             sprintf(tx_buffer, "%.4f,%.4f\r\n", MAX30101_NIRS_FilteredSingleCurrentSample.red, MAX30101_NIRS_FilteredSingleCurrentSample.ir);
             USART2_putString(tx_buffer);
             data_ready = 0; // Reset flag after transmission
